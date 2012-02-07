@@ -777,7 +777,7 @@ wxdialog(?wxID_ABOUT) ->
         "Pearson product-moment correlation\n"
         "coefficient calculator.\n\n"
         "Author: Aleksey Morarash <aleksey.morarash@gmail.com>\n"
-        "License: GPL v2\n"
+        "License: FreeBSD\n"
         "Version: 1.0\n",
     Modal =
         wxMessageDialog:new(
