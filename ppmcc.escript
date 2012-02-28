@@ -3,7 +3,7 @@
 
 %%% ---------------------------------------------------------------------
 %%% File    : ppmcc
-%%% Version : 1.0
+%%% Version : 1.1
 %%% Author  : Aleksey Morarash <aleksey.morarash@gmail.com>
 %%% Description: Pearson product-moment correlation coefficient
 %%%              calculator.
@@ -143,11 +143,35 @@ student_table() ->
      [500, 1.2830, 1.6470,  1.9640,  2.3330,  2.7850,   2.8190,   3.1060,   3.3100]
     ].
 
+-define(cfg_quiet, quiet).
+
 %% @doc Payload.
-%% @spec do_calculations(N, CorrelationSequences) -> none
+%% @spec do_calculations(N, CorrelationSequences, Spearman) -> none
 %%     N = integer(),
 %%     CorrelationSequences = [{X, Y}],
-%%         X = Y = float()
+%%         X = Y = float(),
+%%     Spearman = boolean()
+do_calculations(N, CorrelationSequences, true) ->
+    case get(?cfg_quiet) of
+        true -> nop;
+        _ -> print("Ranking source variables...~n", [])
+    end,
+    {Xs, Ys} = lists:unzip(CorrelationSequences),
+    RankedXs = rank(Xs),
+    RankedYs = rank(Ys),
+    RankedCorrelationSequences =
+        lists:zip(RankedXs, RankedYs),
+    print_table(["x", "Ranked x", "y", "Ranked y"],
+                lists:map(
+                  fun({{X, RX}, {Y, RY}}) ->
+                          [X, RX, Y, RY]
+                  end,
+                  lists:zip(
+                    lists:zip(Xs, RankedXs),
+                    lists:zip(Ys, RankedYs)))),
+    do_calculations(N, RankedCorrelationSequences);
+do_calculations(N, CorrelationSequences, _) ->
+    do_calculations(N, CorrelationSequences).
 do_calculations(0, _) ->
     s_error("There is no meaning input data at all.");
 do_calculations(N, _) when N < 6 ->
@@ -192,19 +216,30 @@ do_calculations(N, CorrelationSequences) ->
             s_error("No such element (~w) in Student criteria table", [F])
     end.
 
+rank(List) ->
+    Orders = lists:zip(lists:sort(List), lists:seq(1, length(List))),
+    Map =
+        lists:map(
+          fun(E) ->
+                  Matched = [N || {K, N} <- Orders, K == E],
+                  {E, lists:sum(Matched) / length(Matched)}
+          end, lists:usort(List)),
+    [proplists:get_value(E, Map) ||  E <- List].
+
 %% ----------------------------------------------------------------------
 %% Main section
 %% ----------------------------------------------------------------------
 
 -define(cfg_batch, batch).
--define(cfg_quiet, quiet).
 -define(cfg_plain, plain).
 -define(cfg_precision, precision).
+-define(cfg_spearman, spearman).
 
 -define(ctl_frame, ctl_frame).
 -define(ctl_quiet, ctl_quiet).
 -define(ctl_plain, ctl_plain).
 -define(ctl_precision, ctl_precision).
+-define(ctl_spearman, ctl_spearman).
 -define(ctl_notebook, ctl_notebook).
 -define(ctl_tab1, ctl_tab1).
 -define(ctl_tab2, ctl_tab2).
@@ -222,16 +257,17 @@ main(Args) ->
     case get(?cfg_batch) of
         true ->
             {ok, PairsCount, Pairs} = read_input(),
-            do_calculations(PairsCount, Pairs);
+            do_calculations(PairsCount, Pairs, get(?cfg_spearman));
         _ ->
             Wx = wx:new(),
             {Frame,
-             Precision, Quiet, DrawTables,
+             Precision, Quiet, Spearman, DrawTables,
              Notebook, Tab1, Tab2} =
                 wx:batch(fun() -> wxcreate_window(Wx) end),
             put(?ctl_frame, Frame),
             put(?ctl_precision, Precision),
             put(?ctl_quiet, Quiet),
+            put(?ctl_spearman, Spearman),
             put(?ctl_plain, DrawTables),
             put(?ctl_notebook, Notebook),
             put(?ctl_tab1, Tab1),
@@ -258,6 +294,8 @@ process_arg("-q") ->
     put(?cfg_quiet, true);
 process_arg("--quiet") ->
     put(?cfg_quiet, true);
+process_arg("--spearman") ->
+    put(?cfg_spearman, true);
 process_arg("--plain") ->
     put(?cfg_plain, true);
 process_arg("-p" ++ Str) ->
@@ -441,6 +479,7 @@ help() ->
         "\t              will be shown);~n"
         "\t-pPrecision - sets desired precision for float numbers.~n"
         "\t              Default is 4;~n"
+        "\t--spearman  - calculate Spearman`s rank correlation coefficient;~n"
         "\t--plain     - do not draw tables. Will show TAB-separated~n"
         "\t              values instead.~n~n"
         "When in batch mode, reads input data from standard input and~n"
@@ -663,6 +702,12 @@ wxcreate_window(Wx) ->
     wxSpinCtrl:setRange(Precision, 1, 9),
     wxSpinCtrl:setToolTip(Precision, "Results precision (from 1 to 9)"),
     wxSizer:add(PanelSizer, PrecPanel, [{proportion, 0}]),
+    Spearman = wxCheckBox:new(
+                 Panel, ?wxID_ANY,
+                 "Calculate Spearman`s rank correlation coefficient", []),
+    wxSizer:add(PanelSizer, Spearman,
+                [{flag, ?wxEXPAND bor ?wxALL},
+                 {border, 3}, {proportion, 0}]),
     Quiet = wxCheckBox:new(
               Panel, ?wxID_ANY,
               "Be quiet (outputs only final results)", []),
@@ -707,7 +752,7 @@ wxcreate_window(Wx) ->
     wxWindow:setFont(Tab2, TextFont),
     wxAuiNotebook:addPage(Notebook, Tab2, "Results", []),
     {Frame,
-     Precision, Quiet, DrawTables,
+     Precision, Quiet, Spearman, DrawTables,
      Notebook, Tab1, Tab2}.
 
 wxloop() ->
@@ -745,6 +790,7 @@ wxloop() ->
             wxloop();
         #wx{id = ?wxID_OK,
             event = #wxCommand{type = command_button_clicked}} ->
+            put(?cfg_spearman, wxCheckBox:getValue(get(?ctl_spearman))),
             put(?cfg_quiet, wxCheckBox:getValue(get(?ctl_quiet))),
             put(?cfg_plain, not wxCheckBox:getValue(get(?ctl_plain))),
             put(?cfg_precision, wxSpinCtrl:getValue(get(?ctl_precision))),
@@ -753,7 +799,7 @@ wxloop() ->
             case read_input() of
                 {ok, PairsCount, Pairs} ->
                     try
-                        do_calculations(PairsCount, Pairs),
+                        do_calculations(PairsCount, Pairs, get(?cfg_spearman)),
                         wxAuiNotebook:setSelection(get(?ctl_notebook), 1)
                     catch
                         _:{error, _} -> nop;
